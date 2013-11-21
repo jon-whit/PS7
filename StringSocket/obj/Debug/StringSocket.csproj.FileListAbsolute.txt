@@ -1,4 +1,0 @@
-C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocket\bin\Debug\StringSocket.dll
-C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocket\bin\Debug\StringSocket.pdb
-C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocket\obj\Debug\StringSocket.dll
-C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocket\obj\Debug\StringSocket.pdb
