@@ -1,5 +1,6 @@
 C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocketSol\bin\Debug\StringSocketSol.dll.config
 C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocketSol\bin\Debug\StringSocketSol.dll
 C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocketSol\bin\Debug\StringSocketSol.pdb
+C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocketSol\obj\Debug\StringSocketSol.csprojResolveAssemblyReference.cache
 C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocketSol\obj\Debug\StringSocketSol.dll
 C:\Users\Jon\Desktop\CS 3500\Homework Solutions\PS7\StringSocketSol\obj\Debug\StringSocketSol.pdb
