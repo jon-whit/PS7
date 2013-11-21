@@ -54,10 +54,6 @@
     <Compile Include="StringSocketTest.cs" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\StringSocketSol\StringSocketSol.csproj">
-      <Project>{97ce4ad7-a2c6-472e-bd47-b661e36875a3}</Project>
-      <Name>StringSocketSol</Name>
-    </ProjectReference>
     <ProjectReference Include="..\StringSocket\StringSocket.csproj">
       <Project>{8E503579-ED62-438B-B391-44AD56829B97}</Project>
       <Name>StringSocket</Name>
