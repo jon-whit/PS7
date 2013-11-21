@@ -1,0 +1,11 @@
+# git ignore file
+StringSocket/bin/Debug/StringSocket.pdb
+StringSocket/obj/Debug/StringSocket.pdb
+StringSocketTester/bin/Debug/StringSocket.pdb
+StringSocketTester/bin/Debug/StringSocketSol.pdb
+StringSocketTester/bin/Debug/StringSocketTester.pdb
+StringSocketTester/obj/Debug/build.force
+StringSocketTester/obj/Debug/DesignTimeResolveAssemblyReferencesInput.cache
+StringSocketTester/obj/Debug/StringSocketTester.csproj.FileListAbsolute.txt
+StringSocketTester/obj/Debug/StringSocketTester.csprojResolveAssemblyReference.cache
+StringSocketTester/obj/Debug/StringSocketTester.pdb
