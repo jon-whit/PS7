@@ -116,28 +116,40 @@ namespace CustomNetworking
         {
             lock (SendLock)
             {
+                // Enqueue the SendRequest. If the request is the first, start processing
+                // the request. Otherwise simply enqueue it and it will be taken care of
+                // later.
+                SendRequests.Enqueue(new SendRequest { TextToSend = s, Callback = callback, Payload = payload });
+                if (SendRequests.Count == 1)
+                    ProcessSend();
+            }
+        }
+
+        /// <summary>
+        /// Processes a SendRequest that has been queued. If at any time an exception is thrown, then
+        /// that request will be dequeud and returned back to its caller with its appropriate exception 
+        /// via the ThreadPool.
+        /// </summary>
+        private void ProcessSend()
+        {
+            while (SendRequests.Count > 0)
+            {
+                // Decode the message to be sent into bytes and use the UnderlyingSocket to send the 
+                // message.
+                Byte[] BytesToBeSent = SocketEncoding.GetBytes(SendRequests.Peek().TextToSend);
                 try
                 {
-                    // If the SendRequests queue is empty, then queue the message and send it. 
-                    if (SendRequests.Count == 0)
-                    {
-                        SendRequests.Enqueue(new SendRequest(s, (e, o) => callback(e, o), payload));
-
-                        // Decode the string into bytes and use the UnderlyingSocket to send the 
-                        // message.
-                        Byte[] BytesToBeSent = SocketEncoding.GetBytes(s);
-                        UnderlyingSocket.BeginSend(BytesToBeSent, 0, BytesToBeSent.Length, SocketFlags.None,
-                            MessageSent, BytesToBeSent);
-                    }
-
-                    // If the SendRequests queue is not empty, then enqueue a new Request with the 
-                    // given parameters. 
-                    else
-                        SendRequests.Enqueue(new SendRequest(s, (e, o) => { callback(e, o); }, payload));
+                    UnderlyingSocket.BeginSend(BytesToBeSent, 0, BytesToBeSent.Length, SocketFlags.None,
+                        MessageSent, BytesToBeSent);
+                    break;
                 }
-                catch (Exception)
-                {
 
+                // If any kind of exception occured, dequeue the SendRequest and hand it off to the
+                // OS so that it can be returned approrpriately.
+                catch (Exception e)
+                {
+                    SendRequest CurrentRequest = SendRequests.Dequeue();
+                    ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(e, CurrentRequest.Payload));
                 }
             }
         }
@@ -148,45 +160,54 @@ namespace CustomNetworking
         /// </summary>
         private void MessageSent(IAsyncResult result)
         {
-            lock (SendLock)
+            // Get the bytes that the underlying socket attempted to send.
+            byte[] OutgoingBuffer = (byte[]) result.AsyncState;
+            int BytesSoFar = 0;
+            try
             {
-                // Get the bytes that the underlying socket attempted to send.
-                byte[] OutgoingBuffer = (byte[]) result.AsyncState;
-
                 // Find out how many bytes were actually sent.
-                int BytesSoFar = UnderlyingSocket.EndSend(result);
+                BytesSoFar = UnderlyingSocket.EndSend(result);
+            }
+            catch (Exception e)
+            {
+                SendRequest CurrentRequest = SendRequests.Dequeue();
+                ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(e, CurrentRequest.Payload));
+                ProcessSend();
+                return;
+            }
 
-                if (BytesSoFar == 0)
-                {
-                    UnderlyingSocket.Close();
-                    return;
-                }
-                // If we have sent the whole message, then dequeue the next SendRequest and call 
-                // its callback with the associated exception and payload. 
-                else if (BytesSoFar == OutgoingBuffer.Length)
+            // If we have sent the whole message, then dequeue the next SendRequest and call 
+            // its callback with the associated exception and payload. 
+            if (BytesSoFar == OutgoingBuffer.Length)
+            {
+                lock (SendLock)
                 {
                     // At this point we know that the message has been completely sent. Dequeue the 
                     // next Request.
                     SendRequest CurrentRequest = SendRequests.Dequeue();
 
                     // Use the ThreadPool to process the callback. 
-                    ThreadPool.QueueUserWorkItem(x => CurrentRequest.SendReqCallback(null, CurrentRequest.Payload));
+                    ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(null, CurrentRequest.Payload));
 
                     // Check if the SendRequests queue contains more requests. If there are more SendRequests,
                     // then peek and send the next message. 
-                    if (SendRequests.Count != 0)
-                    {
-                        SendRequest NextRequest = SendRequests.Peek();
-                        Byte[] BytesToBeSent = SocketEncoding.GetBytes(NextRequest.Message);
-                        UnderlyingSocket.BeginSend(BytesToBeSent, 0, BytesToBeSent.Length, SocketFlags.None,
-                            MessageSent, BytesToBeSent);
-                    }
-
+                    ProcessSend();
                 }
-                else
+            }
+            else
+            {
+                try
+                {
                     // Otherwise, send the remaining bytes by using the offset. 
                     UnderlyingSocket.BeginSend(OutgoingBuffer, BytesSoFar, OutgoingBuffer.Length - BytesSoFar,
                         SocketFlags.None, MessageSent, OutgoingBuffer);
+                }
+                catch (Exception e)
+                {
+                    SendRequest CurrentRequest = SendRequests.Dequeue();
+                    ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(e, CurrentRequest.Payload));
+                    ProcessSend();
+                }
             }
         }
 
@@ -256,36 +277,39 @@ namespace CustomNetworking
         {
             lock (ReceiveLock)
             {
-                try
+                ReceiveRequests.Enqueue(new ReceiveRequest{Callback = callback, Payload = payload});
+                if (ReceiveRequests.Count == 1)
+                    ProcessReceive();
+            }
+        }
+
+        private void ProcessReceive()
+        {
+            lock (ReceiveLock)
+            {
+                // Process each string that has been sent with each ReceiveRequest and hand 
+                // the appropriate callback to the OS through the ThreadPool.
+                while (ReceivedMessages.Count > 0 && ReceiveRequests.Count > 0)
                 {
-                    // An IncomingBuffer for receiving the bytes
-                    byte[] IncomingBuffer = new byte[1024];
-
-                    // If the ReceiveRequests queue is empty, then queue the ReceiveRequest
-                    // and begin receiving bytes.
-                    if (ReceiveRequests.Count == 0)
-                    {
-                        ReceiveRequests.Enqueue(new ReceiveRequest((s, e, o) => callback(s, e, o), payload));
-
-                        //If there are any strings in ReceivedMessages dequeue the next 
-                        //message and execute the next callback.
-                        if (ReceivedMessages.Count != 0)
-                            ExecuteCallback(ReceivedMessages.Dequeue());
-
-                        // Receive the bytes via the underlying socket.
-                        else
-                            UnderlyingSocket.BeginReceive(IncomingBuffer, 0, IncomingBuffer.Length, SocketFlags.None,
-                                MessageReceived, IncomingBuffer);
-                    }
-
-                    // If the ReceiveRequests queue isn't empty, then queue up the ReceiveRequests
-                    // so we can process it later.
-                    else
-                        ReceiveRequests.Enqueue(new ReceiveRequest((s, e, o) => callback(s, e, o), payload));
+                    String CurrentMessage = ReceivedMessages.Dequeue();
+                    ReceiveRequest CurrentRequest = ReceiveRequests.Dequeue();
+                    ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(CurrentMessage, null, CurrentRequest.Payload));
                 }
-                catch (Exception)
-                {
 
+                while (ReceiveRequests.Count > 0)
+                {
+                    try
+                    {
+                        byte[] IncomingBuffer = new byte[1024];
+                        UnderlyingSocket.BeginReceive(IncomingBuffer, 0, IncomingBuffer.Length, SocketFlags.None, MessageReceived, IncomingBuffer);
+                        break;
+                    }
+                    catch (Exception e)
+                    {
+                        ReceiveRequest CurrentRequest = ReceiveRequests.Dequeue();
+                        ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(null, e, CurrentRequest.Payload));
+                        IncomingMessage = String.Empty;
+                    }
                 }
             }
         }
@@ -295,111 +319,82 @@ namespace CustomNetworking
         /// </summary>
         private void MessageReceived(IAsyncResult result)
         {
-            lock (ReceiveLock)
+            // Get the buffer to which the data was written.
+            byte[] IncomingBuffer = (byte[]) (result.AsyncState);
+
+            // Figure out how many bytes have come in.
+            int NumReceivedBytes = 0;
+            try
             {
-                // Get the buffer to which the data was written.
-                byte[] IncomingBuffer = (byte[]) (result.AsyncState);
+                NumReceivedBytes = UnderlyingSocket.EndReceive(result);
+            }
+            catch (Exception e)
+            {
+                ReceiveRequest CurrentRequest = ReceiveRequests.Dequeue();
+                ThreadPool.QueueUserWorkItem(x => CurrentRequest.Callback(null, e, CurrentRequest.Payload));
+                ProcessReceive();
+                IncomingMessage = String.Empty;
+                return;
+            }
 
-                // Figure out how many bytes have come in.
-                int NumReceivedBytes = UnderlyingSocket.EndReceive(result);
+            // If no bytes were received, it means the client closed its side of the socket.
+            // Report that to the console and close our socket.
+            if (NumReceivedBytes == 0)
+            {
+                ReceivedMessages.Enqueue(null);
+                ProcessReceive();
+            }
 
-                // If no bytes were received, it means the client closed its side of the socket.
-                // Report that to the console and close our socket.
-                if (NumReceivedBytes == 0)
+            // Otherwise, decode the incoming bytes and append them to the IncomingMessage.  
+            // Then request more bytes.
+            else
+            {
+                // Convert the bytes into a string. 
+                IncomingMessage += SocketEncoding.GetString(IncomingBuffer, 0, NumReceivedBytes);
+
+                // Find the new line character, call the callback function when we find it, and 
+                // end receiving. 
+                int index;
+                while ((index = IncomingMessage.IndexOf('\n')) >= 0)
                 {
-                    UnderlyingSocket.Close();
-                    return;
+                    // While there is a newline character, get the 
+                    // string up to the newline character.
+                    ReceivedMessages.Enqueue(IncomingMessage.Substring(0, index));
+                    IncomingMessage = IncomingMessage.Substring(index + 1); 
                 }
 
-                // Otherwise, decode the incoming bytes and append them to the IncomingMessage.  
-                // Then request more bytes.
-                else
-                {
-                    // Convert the bytes into a string. 
-                    IncomingMessage += SocketEncoding.GetString(IncomingBuffer, 0, NumReceivedBytes);
-
-                    // Find the new line character, call the callback function when we find it, and 
-                    // end receiving. 
-                    int index;
-                    while ((index = IncomingMessage.IndexOf('\n')) >= 0)
-                    {
-                        // While there is a newline character, get the 
-                        // string up to the newline character.
-                        string MessageToProcess = IncomingMessage.Substring(0, index);
-                        IncomingMessage = IncomingMessage.Substring(index + 1);
-
-                        // Pass the MessageToProcess to the ExecuteCallBack function so that we can
-                        // hand it off to the OS.
-
-                        // If there are pending callbacks, execute the next callback.
-                        if (ReceiveRequests.Count != 0)
-                            ExecuteCallback(MessageToProcess);
-
-                        // If there are no more pending callbacks add the current string to a queue of strings.
-                        else
-                        {
-                            ReceivedMessages.Enqueue(MessageToProcess);
-                        }
-                    }
-
-                    if (ReceiveRequests.Count != 0)
-                    {
-                        // Allow more data to be received from the underlying socket.
-                        UnderlyingSocket.BeginReceive(IncomingBuffer, 0, IncomingBuffer.Length, SocketFlags.None,
-                            MessageReceived, IncomingBuffer);
-                    }
-                }
+                ProcessReceive();
             }
         }
 
-        #region Helper Method(s) for the MessageReceived callback.
         /// <summary>
-        /// Dequeues the next ReceiveRequest and passes the callback to the OS so that
-        /// it can be handled appropriately.
+        /// Closes the underlying socket if it is connected to any hosts. This will finish
+        /// any send/receive that may be running at the instant this function is called.
+        /// If there are a bulk of sends/receives waiting, then the operation in progress
+        /// will be completed and then all other processes will be terminated.
         /// </summary>
-        private void ExecuteCallback(string CurrentMessage)
+        public void Close()
         {
-            // Dequeue the next ReceiveRequest callback and pass it to the ThreadPool to be
-            // executed at a later time.
-            ReceiveRequest CurrentRequest = ReceiveRequests.Dequeue();
+            if (UnderlyingSocket.Connected)
+            {
+                UnderlyingSocket.Shutdown(SocketShutdown.Both);
+                UnderlyingSocket.Close();
+            }
 
-            // Sends the ReceiveRequest callback to the OS to be handled at a later time.
-            ThreadPool.QueueUserWorkItem(x => CurrentRequest.RecReqCallback(CurrentMessage, null,
-                CurrentRequest.Payload));
-
-       
         }
-        #endregion
 
-        #region Nested Classes for Receive and Send Requests
+
+        #region Nested Structs for Receive and Send Requests
 
         /// <summary>
         /// Represents a ReceiveRequest for a StringSocket. Each ReceiveRequest contains
         /// a callback and a payload. A ReceiveRequest will be used to store the data
         /// necessary to process messages when they are received across the StringSocket.
         /// </summary>
-        private class ReceiveRequest
+        private struct ReceiveRequest
         {
-            public delegate void Callback(string s, Exception e, object payload);
-
-            // Instance variables used to represent a ReceiveRequest:
-            private Callback ReceiveCallback;
-            private object ReceivePayload;
-
-            // Public Properties so that we have access to the private member
-            // variables.
-            public Callback RecReqCallback { get { return ReceiveCallback; } }
-            public object Payload { get { return ReceivePayload; } }
-
-            /// <summary>
-            /// Constructor used to initialize a new ReceiveRequest. A new ReceiveRequest needs
-            /// the callback associated with the string, and the payload.
-            /// </summary>
-            public ReceiveRequest(Callback ReceiveCallback, object Payload)
-            {
-                this.ReceiveCallback = ReceiveCallback;
-                this.ReceivePayload = Payload;
-            }
+            public ReceiveCallback Callback { get; set; }
+            public object Payload { get; set; }
         }
 
         /// <summary>
@@ -408,32 +403,11 @@ namespace CustomNetworking
         /// will be used to store the data necessary to process messages when they are
         /// to be sent across the StringSocket.
         /// </summary>
-        private class SendRequest
+        private struct SendRequest
         {
-            public delegate void Callback(Exception e, object payload);
-
-            // Instance variables used to represent a SendRequest:
-            private string MessageToBeSent;
-            private Callback SendCallback;
-            private object SendPayload;
-
-            // Public Properties so that we have access to the private member
-            // variables.
-            public object Payload { get { return SendPayload; } }
-            public Callback SendReqCallback { get { return SendCallback; } }
-            public string Message { get { return MessageToBeSent; } }
-
-            /// <summary>
-            /// Constructor used to initialize a new SendRequest. A new SendRequest needs the
-            /// message to be sent, the callback that is associated witht he send request, and
-            /// the payload.
-            /// </summary>
-            public SendRequest(String message, Callback SendCallback, Object payload)
-            {
-                this.MessageToBeSent = message;
-                this.SendCallback = SendCallback;
-                this.SendPayload = payload;
-            }
+            public string TextToSend { get; set; }
+            public SendCallback Callback { get; set; }
+            public object Payload { get; set; }
         }
 
         #endregion
