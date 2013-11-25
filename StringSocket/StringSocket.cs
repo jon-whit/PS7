@@ -61,7 +61,6 @@ namespace CustomNetworking
         private string IncomingMessage;
         private readonly object SendLock;
         private readonly object ReceiveLock;
-        private bool IsConnected;
 
         // Queues used to store the SendRequests and ReceiveRequests. These queues
         // will store the messages/payloads being sent, and the callback/payloads
@@ -70,7 +69,7 @@ namespace CustomNetworking
         private Queue<SendRequest> SendRequests;
         private Queue<String> ReceivedMessages;
 
-        public bool Connected {get {return IsConnected;}}
+        public bool Connected {get {return UnderlyingSocket.Connected;}}
         /// <summary>
         /// Creates a StringSocket from a regular Socket, which should already be connected.  
         /// The read and write methods of the regular Socket must not be called after the
@@ -85,7 +84,6 @@ namespace CustomNetworking
             this.IncomingMessage = String.Empty;
             this.SendLock = new object();
             this.ReceiveLock = new object();
-            this.IsConnected = true;
 
             ReceiveRequests = new Queue<ReceiveRequest>();
             SendRequests = new Queue<SendRequest>();
@@ -380,11 +378,14 @@ namespace CustomNetworking
         {
             if (UnderlyingSocket.Connected)
             {
-                this.IsConnected = false;
                 UnderlyingSocket.Shutdown(SocketShutdown.Both);
                 UnderlyingSocket.Close();
             }
+        }
 
+        public bool SocketStatus()
+        {
+            return UnderlyingSocket.Poll(0, SelectMode.SelectRead);
         }
 
 
