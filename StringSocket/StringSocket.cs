@@ -69,7 +69,9 @@ namespace CustomNetworking
         private Queue<SendRequest> SendRequests;
         private Queue<String> ReceivedMessages;
 
-        public bool Connected {get {return UnderlyingSocket.Connected;}}
+        // Properties used for a StringSocket instance:
+        public bool Connected { get { return UnderlyingSocket.Connected; } }
+
         /// <summary>
         /// Creates a StringSocket from a regular Socket, which should already be connected.  
         /// The read and write methods of the regular Socket must not be called after the
@@ -284,6 +286,11 @@ namespace CustomNetworking
             }
         }
 
+        /// <summary>
+        /// Processes a ReceiveRequest that has been queued. If at any time an exception is thrown, then
+        /// that request will be dequeud and returned back to its caller with its appropriate exception 
+        /// via the ThreadPool.
+        /// </summary>
         private void ProcessReceive()
         {
             lock (ReceiveLock)
@@ -382,12 +389,6 @@ namespace CustomNetworking
                 UnderlyingSocket.Close();
             }
         }
-
-        public bool SocketStatus()
-        {
-            return UnderlyingSocket.Poll(0, SelectMode.SelectRead);
-        }
-
 
         #region Nested Structs for Receive and Send Requests
 
